@@ -1,0 +1,27 @@
+{
+  "name": "次世代ECサイト刷新プロジェクト",
+  "sponsor": "事業本部長",
+  "objectives": [
+    "CVRを1.5倍に向上",
+    "検索UX改善とレコメンド導入"
+  ],
+  "scope": {
+    "in": ["フロントUI刷新", "検索/レコメンド機能", "決済ゲートウェイ刷新"],
+    "out": ["倉庫WMSの刷新", "コールセンターSaaSの刷新"]
+  },
+  "constraints": ["8ヶ月以内にリリース", "既存会員DBは維持"],
+  "assumptions": ["広告予算は現状維持", "主要サプライヤは継続契約"],
+  "milestones": [
+    {"name": "要件定義完了", "target": "2026-01-31"},
+    {"name": "UAT完了", "target": "2026-04-30"}
+  ],
+  "budget": {"currency": "JPY", "amount": 120000000},
+  "stakeholders": [
+    {"name": "営業部", "interest": "在庫連携の安定"},
+    {"name": "CS部", "interest": "問合せ削減"}
+  ],
+  "risk_seeds": [
+    "要件肥大化による遅延",
+    "外部APIのスループット制限"
+  ]
+}

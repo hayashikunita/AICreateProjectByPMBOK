@@ -73,14 +73,149 @@ class OpenAIProvider:
         self.settings = settings
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
+        """Call Chat Completions with compatibility fallbacks:
+        - max_tokens -> fallback to max_completion_tokens when required
+        - temperature unsupported -> fallback to API default by omitting temperature
+        - If content is empty, fallback to Responses API
+        """
         _ensure_messages(messages)
-        resp = self.client.chat.completions.create(
-            model=self.settings.model,
-            messages=messages,
-            temperature=self.settings.temperature,
-            max_tokens=self.settings.max_tokens,
-        )
-        return resp.choices[0].message.content or ""
+
+        def _call(use_completion_param: bool, include_temperature: bool, include_response_format: bool):
+            params: Dict[str, Any] = {
+                "model": self.settings.model,
+                "messages": messages,
+            }
+            if include_temperature:
+                params["temperature"] = self.settings.temperature
+            if include_response_format:
+                # 新仕様モデルでの安全なテキスト出力を促す。未対応モデルではフォールバックする
+                params["response_format"] = {"type": "text"}
+            if use_completion_param:
+                params["max_completion_tokens"] = self.settings.max_tokens
+            else:
+                params["max_tokens"] = self.settings.max_tokens
+            return self.client.chat.completions.create(**params)
+
+        def _extract_text_from_chat(resp: Any) -> str:
+            try:
+                choices = getattr(resp, "choices", []) or []
+                texts: List[str] = []
+                for ch in choices:
+                    msg = getattr(ch, "message", None)
+                    if msg is None:
+                        continue
+                    content = getattr(msg, "content", None)
+                    if content:
+                        texts.append(str(content))
+                return "\n\n".join([t for t in texts if t.strip()])
+            except Exception:
+                return ""
+
+        def _call_responses_api(messages: List[Dict[str, str]]) -> str:
+            # メッセージを単一テキストに畳み込み
+            prompt_lines = [f"{m.get('role','user').upper()}:\n{m.get('content','')}" for m in messages]
+            prompt = "\n\n".join(prompt_lines)
+            r_params: Dict[str, Any] = {
+                "model": self.settings.model,
+                "input": prompt,
+            }
+            # 出力長の指定が必要なモデル向けにまずは設定、エラーなら外して再試行
+            try:
+                r_params["max_output_tokens"] = self.settings.max_tokens
+                r = self.client.responses.create(**r_params)
+            except Exception:
+                r_params.pop("max_output_tokens", None)
+                r = self.client.responses.create(**r_params)
+
+            text2 = getattr(r, "output_text", None)
+            if text2 and str(text2).strip():
+                return str(text2)
+            try:
+                outputs = getattr(r, "output", None) or getattr(r, "outputs", None) or []
+                chunks: List[str] = []
+                for out in outputs:
+                    cont = getattr(out, "content", None) or []
+                    for item in cont:
+                        if getattr(item, "type", "") == "output_text":
+                            val = getattr(item, "text", "")
+                            if val:
+                                chunks.append(str(val))
+                if chunks:
+                    return "\n".join(chunks)
+            except Exception:
+                pass
+            return ""
+
+        # Responses API を優先する条件
+        model_l = (self.settings.model or "").lower()
+        prefer_responses = self.settings.use_responses_api or model_l.startswith("gpt-5") or "gpt-5" in model_l
+
+        if prefer_responses:
+            text_r = _call_responses_api(messages)
+            if text_r and text_r.strip():
+                return text_r
+            # Responsesでダメなら従来の Chat Completions にもトライ
+
+        # GPT-5 系のモデル名では temperature を最初から送らない（仕様互換）
+        default_include_temp = not (model_l.startswith("gpt-5") or "gpt-5" in model_l)
+
+        try:
+            resp = _call(use_completion_param=False, include_temperature=default_include_temp, include_response_format=True)
+        except Exception as e:
+            msg = str(e)
+            # max_tokens が非対応 → max_completion_tokens に切替
+            if "max_tokens" in msg and "max_completion_tokens" in msg:
+                try:
+                    resp = _call(use_completion_param=True, include_temperature=True, include_response_format=True)
+                except Exception as e2:
+                    msg2 = str(e2)
+                    # temperature が非対応 → temperature を省略
+                    if "temperature" in msg2 and ("unsupported" in msg2 or "Only the default" in msg2):
+                        resp = _call(use_completion_param=True, include_temperature=False, include_response_format=True)
+                    # response_format が非対応 → 省略
+                    elif "response_format" in msg2 and ("unsupported" in msg2 or "Invalid" in msg2 or "Unknown" in msg2):
+                        resp = _call(use_completion_param=True, include_temperature=True, include_response_format=False)
+                    else:
+                        raise
+            # temperature が非対応（max_tokensは許容）
+            elif "temperature" in msg and ("unsupported" in msg or "Only the default" in msg):
+                # omit temperature with original max_tokens param
+                try:
+                    resp = _call(use_completion_param=False, include_temperature=False, include_response_format=True)
+                except Exception as e3:
+                    # さらに max_tokens も非対応だった場合の合わせ技
+                    msg3 = str(e3)
+                    if "max_tokens" in msg3 and "max_completion_tokens" in msg3:
+                        resp = _call(use_completion_param=True, include_temperature=False, include_response_format=True)
+                    elif "response_format" in msg3 and ("unsupported" in msg3 or "Invalid" in msg3 or "Unknown" in msg3):
+                        resp = _call(use_completion_param=False, include_temperature=False, include_response_format=False)
+                    else:
+                        raise
+            # response_format が非対応（max_tokens/temperatureは許容）
+            elif "response_format" in msg and ("unsupported" in msg or "Invalid" in msg or "Unknown" in msg):
+                try:
+                    resp = _call(use_completion_param=False, include_temperature=True, include_response_format=False)
+                except Exception as e4:
+                    msg4 = str(e4)
+                    if "max_tokens" in msg4 and "max_completion_tokens" in msg4:
+                        resp = _call(use_completion_param=True, include_temperature=True, include_response_format=False)
+                    elif "temperature" in msg4 and ("unsupported" in msg4 or "Only the default" in msg4):
+                        resp = _call(use_completion_param=False, include_temperature=False, include_response_format=False)
+                    else:
+                        raise
+            else:
+                raise
+
+        text = _extract_text_from_chat(resp)
+        if text and text.strip():
+            return text
+
+        # 最後の手段: Responses API での再試行
+        text_r2 = _call_responses_api(messages)
+        if text_r2 and text_r2.strip():
+            return text_r2
+
+        return ""
 
 
 class AzureOpenAIProvider:
@@ -101,12 +236,65 @@ class AzureOpenAIProvider:
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
         _ensure_messages(messages)
-        resp = self.client.chat.completions.create(
-            model=self.settings.model,
-            messages=messages,
-            temperature=self.settings.temperature,
-            max_tokens=self.settings.max_tokens,
-        )
+
+        def _call(use_completion_param: bool, include_temperature: bool, include_response_format: bool):
+            params: Dict[str, Any] = {
+                "model": self.settings.model,
+                "messages": messages,
+            }
+            if include_temperature:
+                params["temperature"] = self.settings.temperature
+            if include_response_format:
+                params["response_format"] = {"type": "text"}
+            if use_completion_param:
+                params["max_completion_tokens"] = self.settings.max_tokens
+            else:
+                params["max_tokens"] = self.settings.max_tokens
+            return self.client.chat.completions.create(**params)
+
+        model_l = (self.settings.model or "").lower()
+        default_include_temp = not (model_l.startswith("gpt-5") or "gpt-5" in model_l)
+
+        try:
+            resp = _call(use_completion_param=False, include_temperature=default_include_temp, include_response_format=True)
+        except Exception as e:
+            msg = str(e)
+            if "max_tokens" in msg and "max_completion_tokens" in msg:
+                try:
+                    resp = _call(use_completion_param=True, include_temperature=True, include_response_format=True)
+                except Exception as e2:
+                    msg2 = str(e2)
+                    if "temperature" in msg2 and ("unsupported" in msg2 or "Only the default" in msg2):
+                        resp = _call(use_completion_param=True, include_temperature=False, include_response_format=True)
+                    elif "response_format" in msg2 and ("unsupported" in msg2 or "Invalid" in msg2 or "Unknown" in msg2):
+                        resp = _call(use_completion_param=True, include_temperature=True, include_response_format=False)
+                    else:
+                        raise
+            elif "temperature" in msg and ("unsupported" in msg or "Only the default" in msg):
+                try:
+                    resp = _call(use_completion_param=False, include_temperature=False, include_response_format=True)
+                except Exception as e3:
+                    msg3 = str(e3)
+                    if "max_tokens" in msg3 and "max_completion_tokens" in msg3:
+                        resp = _call(use_completion_param=True, include_temperature=False, include_response_format=True)
+                    elif "response_format" in msg3 and ("unsupported" in msg3 or "Invalid" in msg3 or "Unknown" in msg3):
+                        resp = _call(use_completion_param=False, include_temperature=False, include_response_format=False)
+                    else:
+                        raise
+            elif "response_format" in msg and ("unsupported" in msg or "Invalid" in msg or "Unknown" in msg):
+                try:
+                    resp = _call(use_completion_param=False, include_temperature=True, include_response_format=False)
+                except Exception as e4:
+                    msg4 = str(e4)
+                    if "max_tokens" in msg4 and "max_completion_tokens" in msg4:
+                        resp = _call(use_completion_param=True, include_temperature=True, include_response_format=False)
+                    elif "temperature" in msg4 and ("unsupported" in msg4 or "Only the default" in msg4):
+                        resp = _call(use_completion_param=False, include_temperature=False, include_response_format=False)
+                    else:
+                        raise
+            else:
+                raise
+
         return resp.choices[0].message.content or ""
 
 

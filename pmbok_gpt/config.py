@@ -25,6 +25,10 @@ class AppSettings(BaseSettings):
     max_tokens: int = 1800
     use_stub: bool = False
     default_language: str = "ja"
+    # LLMが空の本文を返した場合にスタブへ自動フォールバックするか（既定: True）
+    fallback_to_stub_on_empty: bool = True
+    # Chat Completions ではなく Responses API を優先的に使うか（OpenAI のみ）
+    use_responses_api: bool = False
 
     # OpenAI（個別の環境変数から読み込み）
     openai_api_key: Optional[str] = None

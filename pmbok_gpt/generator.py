@@ -75,6 +75,26 @@ def generate_text_document(
     messages = build_messages(language, doc_type, project_context, extra_instructions)
     text = provider.generate(messages)
 
+    # 内容が空の場合の最終フォールバック：スタブで生成して空ファイル回避
+    if not (text and text.strip()):
+        if settings.fallback_to_stub_on_empty:
+            try:
+                fallback_settings = AppSettings()
+                fallback_settings.use_stub = True
+                stub_provider = get_provider(fallback_settings)
+                stub_text = stub_provider.generate(messages)
+                header = (
+                    "【注意】実APIから空出力が返ったため、スタブ生成にフォールバックしました。\n"
+                    f"- provider: {fallback_settings.provider_kind()}\n"
+                    f"- model: {settings.model}\n\n"
+                )
+                text = header + stub_text
+            except Exception:
+                # それでも失敗する場合は空のままとする
+                text = ""
+        else:
+            raise RuntimeError("LLMが空の本文を返しました。フォールバックは無効です（AICPM_FALLBACK_TO_STUB_ON_EMPTY=false）。")
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(text)
     return out_path

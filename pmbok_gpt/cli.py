@@ -12,6 +12,7 @@ from .config import AppSettings
 from .generator import generate_text_document
 from .templates import DOC_TEMPLATES
 from .excel import create_risk_register_excel, create_stakeholder_register_excel
+from .wizard import run_project_wizard
 
 app = typer.Typer(help="PMBOKドキュメント生成CLI")
 
@@ -128,7 +129,9 @@ def diag():  # type: ignore[override]
         "provider": settings.provider_kind(),
         "model": settings.model,
         "use_stub": settings.use_stub,
+        "use_responses_api": getattr(settings, "use_responses_api", False),
         "language": settings.default_language,
+        "fallback_to_stub_on_empty": getattr(settings, "fallback_to_stub_on_empty", True),
         "openai_api_key_set": bool(settings.openai_api_key or os.getenv("OPENAI_API_KEY")),
         "openai_base_url": base_url_effective,
         "openai_base_url_valid": base_url_valid,
@@ -140,3 +143,21 @@ def diag():  # type: ignore[override]
     for k, v in info.items():
         # APIキーは有無のみ表示
         print(f"- {k}: {v}")
+
+
+@app.command()
+def wizard(
+    out: Path = typer.Option("examples/project_from_wizard.json", help="生成先のJSONパス"),
+    language: Optional[str] = typer.Option(None, help="質問・出力言語(ja/en)。未指定は設定値"),
+    max_turns: int = typer.Option(8, help="対話の最大ターン数（LLM使用時）"),
+    level: str = typer.Option("extended", help="収集レベル: basic | extended (既定: extended)"),
+):
+    """ChatGPT（またはスタブ）と対話し、プロジェクトJSONを作成します。"""
+    settings = AppSettings()
+    try:
+        path = run_project_wizard(
+            out_path=str(out), language=language, settings=settings, max_turns=max_turns, level=level
+        )
+        print(f"生成しました: {path}")
+    except Exception as e:
+        raise typer.Exit(code=1) from e

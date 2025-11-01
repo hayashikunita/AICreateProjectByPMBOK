@@ -1,5 +1,13 @@
 # AICreateProjectByPMBOK
 
+<div>
+<video controls src="https://github.com/user-attachments/assets/61c90114-a42f-48ad-951e-293206c91c9e" muted="false"></video>
+</div>
+
+<div>
+<video controls src="https://github.com/user-attachments/assets/6de9c7a5-ac55-4538-97a4-f8393a979dde" muted="false"></video>
+</div>
+
 PMBOKに準拠したプロジェクト・ドキュメント（例: プロジェクト憲章、スコープ記述書、WBS、スケジュール概要、リスク登録簿、ステークホルダー登録簿、コミュニケーション計画など）を、ChatGPT(API)で半自動生成するPython CLIツールです。
 
 - 生成形式: テキスト(.txt)／Excel(.xlsx)
@@ -154,22 +162,6 @@ streamlit run streamlit_app.py
 
 補足（自動リトライ）:
 - OpenAI を選択しており「Responses API を優先」がOFFの状態で生成に失敗した場合、UIは自動的に Responses API へ切り替えて再試行します。再試行結果はその場でプレビュー表示されます。
-
-### 🎥 デモ動画（準備中）
-
-このセクションにアプリの操作動画を掲載します。以下のいずれかの方法で追加できます。
-
-- リポジトリ内に動画を同梱（mp4）: `docs/demo.mp4` を追加すると、以下のリンク/埋め込みで閲覧できます（未配置の場合は404になります）。
-	- 直接リンク: [デモ動画 (mp4)](docs/demo.mp4)
-	- 埋め込み（GitHubの表示環境によってはプレーヤーが出ない場合があります）:
-
-		<!-- ファイルを追加したら、下のブロックのコメントを外してください -->
-		<!--
-		<video src="docs/demo.mp4" controls width="720">
-			お使いの環境では動画を再生できません。こちらから直接ダウンロードしてください:
-			<a href="docs/demo.mp4">docs/demo.mp4</a>
-		</video>
-		-->
 
 
 #### 会社標準の必須項目（拡張レベル）
